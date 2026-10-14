@@ -6,7 +6,7 @@ import { CardHand } from './CardHand';
 import { DeckBuilder } from './DeckBuilder';
 import { SafeImage } from '../common/SafeImage';
 import { sound } from '../../utils/audio';
-import { Play, Pause, RotateCcw, Volume2, VolumeX, Sparkles, BookOpen, Layers, Zap, Heart, Trophy, ArrowRight } from 'lucide-react';
+import { Play, Pause, RotateCcw, Volume2, VolumeX, Sparkles, BookOpen, Layers, Zap, Heart, Trophy, ArrowRight, Home, Gauge, FastForward, AlertTriangle } from 'lucide-react';
 
 interface SummonerGameProps {
   onBackToHub?: () => void;
@@ -75,6 +75,9 @@ export const SummonerGame: React.FC<SummonerGameProps> = ({ onBackToHub }) => {
   // Battle State
   const [isPlaying, setIsPlaying] = useState(false);
   const [isPaused, setIsPaused] = useState(false);
+  const [gameSpeed, setGameSpeed] = useState<0.5 | 1 | 2 | 4>(1);
+  const speedRef = useRef<number>(1);
+  const [showQuitConfirm, setShowQuitConfirm] = useState(false);
   const [showDeckBuilder, setShowDeckBuilder] = useState(false);
   const [wave, setWave] = useState(1);
   const [summonerHp, setSummonerHp] = useState(upgrades.summonerMaxHp);
@@ -88,6 +91,10 @@ export const SummonerGame: React.FC<SummonerGameProps> = ({ onBackToHub }) => {
   const [isWaveComplete, setIsWaveComplete] = useState(false);
   const [isDefeated, setIsDefeated] = useState(false);
   const [soundEnabled, setSoundEnabled] = useState(!sound.getIsMuted());
+
+  useEffect(() => {
+    speedRef.current = gameSpeed;
+  }, [gameSpeed]);
 
   // Refs for combat loop
   const loopRef = useRef({
@@ -215,8 +222,13 @@ export const SummonerGame: React.FC<SummonerGameProps> = ({ onBackToHub }) => {
 
     sound.playScore();
 
-    // Calculate Y coordinate for lane center
-    const laneY = laneIndex * (440 / 3) + 440 / 6;
+    // Calculate Y coordinate for lane center (exact 150px per lane in 450px arena)
+    const laneY = laneIndex * 150 + 75;
+
+    // Check if an enemy is already breaching the sanctuary gate in this lane
+    const invaderAtGate = loopRef.current.units.find((u) => !u.isAlly && u.lane === laneIndex && u.x <= 150);
+    const spawnX = invaderAtGate ? 135 : 125;
+    const initialFacing: 'left' | 'right' = (invaderAtGate && invaderAtGate.x < spawnX) ? 'left' : 'right';
 
     // Spawn unit
     const newUnit: BattlefieldUnit = {
@@ -224,7 +236,7 @@ export const SummonerGame: React.FC<SummonerGameProps> = ({ onBackToHub }) => {
       cardId: card.id,
       name: card.namePt,
       isAlly: true,
-      x: 125,
+      x: spawnX,
       y: laneY,
       lane: laneIndex,
       width: card.role === 'tank' ? 44 : card.role === 'flying' ? 36 : 38,
@@ -241,6 +253,7 @@ export const SummonerGame: React.FC<SummonerGameProps> = ({ onBackToHub }) => {
       isFlying: card.role === 'flying',
       statusEffects: {},
       animationOffset: Math.random() * 10,
+      facing: initialFacing,
     };
 
     loopRef.current.units.push(newUnit);
@@ -254,6 +267,27 @@ export const SummonerGame: React.FC<SummonerGameProps> = ({ onBackToHub }) => {
     setSelectedCardIndex(null);
   };
 
+  // Keyboard shortcut listener for spacebar pause/play, 1-4 card play, Escape
+  useEffect(() => {
+    if (!isPlaying) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.code === 'Space') {
+        e.preventDefault();
+        setIsPaused((p) => !p);
+      } else if (e.code === 'Escape') {
+        e.preventDefault();
+        setIsPaused(true);
+      } else if (['Digit1', 'Digit2', 'Digit3', 'Digit4'].includes(e.code)) {
+        const idx = parseInt(e.code.replace('Digit', '')) - 1;
+        if (hand[idx]) {
+          handlePlayCard(hand[idx], idx);
+        }
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isPlaying, hand, energy]);
+
   // Main 60 FPS Combat Game Loop
   useEffect(() => {
     if (!isPlaying || isPaused) return;
@@ -262,15 +296,16 @@ export const SummonerGame: React.FC<SummonerGameProps> = ({ onBackToHub }) => {
 
     const gameLoop = () => {
       const s = loopRef.current;
+      const spd = speedRef.current; // Current tactical game speed (0.5x, 1x, 2x, 4x)
 
-      // 1. Regenerate Energy over time
+      // 1. Regenerate Energy over time scaled by speed
       if (s.energy < upgrades.maxEnergy) {
-        s.energy = Math.min(upgrades.maxEnergy, s.energy + (upgrades.energyRegenRate / 60));
+        s.energy = Math.min(upgrades.maxEnergy, s.energy + ((upgrades.energyRegenRate / 60) * spd));
         setEnergy(s.energy);
       }
 
       // 2. Mob Spawning
-      s.spawnTimer++;
+      s.spawnTimer += spd;
       const spawnInterval = Math.max(70, 160 - s.waveNumber * 15);
 
       if (s.spawnTimer >= spawnInterval && s.spawnCount < s.totalWaveEnemies) {
@@ -281,7 +316,7 @@ export const SummonerGame: React.FC<SummonerGameProps> = ({ onBackToHub }) => {
         if (isBoss) s.isBossSpawned = true;
 
         const lane = Math.floor(Math.random() * 3);
-        const laneY = lane * (440 / 3) + 440 / 6;
+        const laneY = lane * 150 + 75; // Exact lane center in 450px height
 
         let mobName = 'Rastejante da Sombra';
         let mobHp = 110 + s.waveNumber * 35;
@@ -352,31 +387,55 @@ export const SummonerGame: React.FC<SummonerGameProps> = ({ onBackToHub }) => {
 
       // 3. Update Units Movement & Attack Cycles
       s.units.forEach((unit) => {
-        // Cooldown decay
+        // Cooldown decay scaled by speed
         if (unit.attackCooldown > 0) {
-          unit.attackCooldown -= 1 / 60;
+          unit.attackCooldown -= (1 / 60) * spd;
         }
 
         // Frozen / Roots decay
         if (unit.statusEffects.frozen && unit.statusEffects.frozen > 0) {
-          unit.statusEffects.frozen--;
+          unit.statusEffects.frozen -= spd;
           return; // Cannot move or attack while rooted
         }
 
         // Check for targets in the same lane
-        const targets = s.units.filter((other) => other.isAlly !== unit.isAlly && other.lane === unit.lane);
+        const sameLaneEnemies = s.units.filter((other) => other.isAlly !== unit.isAlly && other.lane === unit.lane);
         
         let nearestTarget: BattlefieldUnit | null = null;
         let nearestDist = 9999;
 
-        for (const target of targets) {
-          const dist = Math.abs(target.x - unit.x);
-          // Facing check: ally attacks to the right, mob attacks to the left
-          const isFacing = unit.isAlly ? target.x > unit.x : target.x < unit.x;
-          if (isFacing && dist < nearestDist) {
-            nearestDist = dist;
-            nearestTarget = target;
+        if (unit.isAlly) {
+          // HIGHEST DEFENSIVE PRIORITY: If an enemy in this lane is attacking or breaching Sanctuary (x <= 150),
+          // all allies in lane immediately target the foremost enemy attacking the player!
+          const invadersAtGate = sameLaneEnemies.filter((e) => e.x <= 150);
+          if (invadersAtGate.length > 0) {
+            invadersAtGate.sort((a, b) => a.x - b.x); // Smallest x = closest to destroying sanctuary
+            nearestTarget = invadersAtGate[0];
+            nearestDist = Math.abs(nearestTarget.x - unit.x);
+          } else {
+            for (const target of sameLaneEnemies) {
+              const dist = Math.abs(target.x - unit.x);
+              if (dist < nearestDist) {
+                nearestDist = dist;
+                nearestTarget = target;
+              }
+            }
           }
+        } else {
+          for (const target of sameLaneEnemies) {
+            const dist = Math.abs(target.x - unit.x);
+            if (dist < nearestDist) {
+              nearestDist = dist;
+              nearestTarget = target;
+            }
+          }
+        }
+
+        // Update facing direction
+        if (nearestTarget) {
+          unit.facing = nearestTarget.x < unit.x ? 'left' : 'right';
+        } else {
+          unit.facing = unit.isAlly ? 'right' : 'left';
         }
 
         // Sanctuary target for enemies if near sanctuary
@@ -389,7 +448,7 @@ export const SummonerGame: React.FC<SummonerGameProps> = ({ onBackToHub }) => {
             unit.attackCooldown = unit.attackSpeed;
 
             if (unit.role === 'ranged') {
-              // Launch projectile
+              // Launch projectile with homing targetUnitId
               s.projectiles.push({
                 id: `proj-${Date.now()}-${Math.random()}`,
                 startX: unit.x,
@@ -398,6 +457,7 @@ export const SummonerGame: React.FC<SummonerGameProps> = ({ onBackToHub }) => {
                 y: unit.y,
                 targetX: targetUnit.x,
                 targetY: targetUnit.y,
+                targetUnitId: targetUnit.id,
                 speed: 8,
                 damage: unit.attack,
                 isAlly: unit.isAlly,
@@ -426,10 +486,14 @@ export const SummonerGame: React.FC<SummonerGameProps> = ({ onBackToHub }) => {
             }
           }
         } else {
-          // No enemies in range: March forward!
-          const step = (unit.moveSpeed / 60);
+          // Movement: if target is behind us at sanctuary gate, turn around and march toward it!
+          const step = (unit.moveSpeed / 60) * spd;
           if (unit.isAlly) {
-            unit.x += step;
+            if (nearestTarget && nearestTarget.x < unit.x) {
+              unit.x = Math.max(105, unit.x - step);
+            } else {
+              unit.x += step;
+            }
           } else {
             unit.x -= step;
           }
@@ -445,31 +509,41 @@ export const SummonerGame: React.FC<SummonerGameProps> = ({ onBackToHub }) => {
         }
       });
 
-      // 4. Update Projectiles
+      // 4. Update Projectiles with speed scaling and homing
       s.projectiles.forEach((proj) => {
+        if (proj.targetUnitId) {
+          const liveTarget = s.units.find((u) => u.id === proj.targetUnitId);
+          if (liveTarget) {
+            proj.targetX = liveTarget.x;
+            proj.targetY = liveTarget.y;
+          }
+        }
+
         const dx = proj.targetX - proj.x;
         const dy = proj.targetY - proj.y;
         const dist = Math.hypot(dx, dy);
+        const moveDist = proj.speed * spd;
 
-        if (dist <= proj.speed) {
+        if (dist <= moveDist) {
           // Projectile impact
           proj.x = 9999;
-          const target = s.units.find(
-            (u) => u.isAlly !== proj.isAlly && Math.hypot(u.x - proj.targetX, u.y - proj.targetY) < 40
-          );
+          const target = proj.targetUnitId
+            ? s.units.find((u) => u.id === proj.targetUnitId)
+            : s.units.find(
+                (u) => u.isAlly !== proj.isAlly && Math.hypot(u.x - proj.targetX, u.y - proj.targetY) < 40
+              );
           if (target) {
             target.hp -= proj.damage;
             sound.playHit(420);
           }
         } else {
-          proj.x += (dx / dist) * proj.speed;
-          proj.y += (dy / dist) * proj.speed;
+          proj.x += (dx / dist) * moveDist;
+          proj.y += (dy / dist) * moveDist;
         }
       });
       s.projectiles = s.projectiles.filter((p) => p.x < 1200);
 
       // 5. Cleanup dead units & grant crystals
-      const initialUnitsCount = s.units.length;
       s.units = s.units.filter((unit) => {
         if (unit.hp <= 0) {
           if (!unit.isAlly) {
@@ -577,10 +651,10 @@ export const SummonerGame: React.FC<SummonerGameProps> = ({ onBackToHub }) => {
           <span className="text-xl">🌿</span>
           <div>
             <h1 className="text-base sm:text-lg font-black tracking-tight text-white">
-              Guardião da Floresta
+              Summoner Guardian
             </h1>
             <p className="text-[11px] text-emerald-400 font-semibold hidden sm:block">
-              Invocador Ancestral · Batalha Tática de Cartas
+              Invocador da Natureza · Batalha Tática de Cartas
             </p>
           </div>
         </div>
@@ -643,7 +717,7 @@ export const SummonerGame: React.FC<SummonerGameProps> = ({ onBackToHub }) => {
                   className="flex items-center justify-center gap-2 px-8 py-3.5 bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 hover:to-teal-400 text-slate-950 font-black rounded-xl text-base shadow-xl transition-transform active:scale-95"
                 >
                   <Play size={18} fill="currentColor" />
-                  Iniciar Batalha (Onda 1)
+                  Iniciar Campanha (Nível 1 · Floresta)
                 </button>
                 <button
                   onClick={() => setShowDeckBuilder(true)}
@@ -651,6 +725,40 @@ export const SummonerGame: React.FC<SummonerGameProps> = ({ onBackToHub }) => {
                 >
                   <Layers size={14} /> Customizar Baralho & Upgrades
                 </button>
+              </div>
+            </div>
+          </div>
+
+          {/* 5 Biomes Campaign Map Strip */}
+          <div className="w-full bg-slate-950/80 border border-slate-800 rounded-xl p-3 sm:p-4 mb-6">
+            <div className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2 flex items-center gap-1.5">
+              <span>🗺️</span> Ambientes da Campanha (5 Níveis)
+            </div>
+            <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 text-xs">
+              <div className="p-2.5 bg-emerald-950/40 border border-emerald-500/40 rounded-lg text-center">
+                <div className="text-xl mb-1">🌲</div>
+                <div className="font-bold text-emerald-300">Nv. 1 · Floresta</div>
+                <div className="text-[10px] text-slate-400">Bosque Serena</div>
+              </div>
+              <div className="p-2.5 bg-slate-900 border border-slate-800 rounded-lg text-center">
+                <div className="text-xl mb-1">🪨</div>
+                <div className="font-bold text-sky-300">Nv. 2 · Caverna</div>
+                <div className="text-[10px] text-slate-400">Gemas Sombrias</div>
+              </div>
+              <div className="p-2.5 bg-slate-900 border border-slate-800 rounded-lg text-center">
+                <div className="text-xl mb-1">💧</div>
+                <div className="font-bold text-cyan-300">Nv. 3 · Rio / Lago</div>
+                <div className="text-[10px] text-slate-400">Águas Sagradas</div>
+              </div>
+              <div className="p-2.5 bg-slate-900 border border-slate-800 rounded-lg text-center">
+                <div className="text-xl mb-1">🏔️</div>
+                <div className="font-bold text-slate-300">Nv. 4 · Montanha</div>
+                <div className="text-[10px] text-slate-400">Pico Gelado</div>
+              </div>
+              <div className="p-2.5 bg-rose-950/40 border border-rose-500/40 rounded-lg text-center col-span-2 sm:col-span-1">
+                <div className="text-xl mb-1">🌋</div>
+                <div className="font-bold text-rose-400">Nv. 5 · Vulcão</div>
+                <div className="text-[10px] text-rose-300">Chefe Titã Final</div>
               </div>
             </div>
           </div>
@@ -690,7 +798,91 @@ export const SummonerGame: React.FC<SummonerGameProps> = ({ onBackToHub }) => {
         </div>
       ) : (
         /* Active Battlefield View */
-        <div className="w-full max-w-4xl px-2 sm:px-4 pt-4 flex flex-col items-center">
+        <div className="w-full max-w-4xl px-2 sm:px-4 pt-3 flex flex-col items-center">
+          {/* In-Battle Tactical Command Widget Bar */}
+          <div className="w-full max-w-[840px] mb-2 px-3 py-2 bg-slate-900/95 border border-slate-800 rounded-xl shadow-xl flex flex-wrap items-center justify-between gap-2 backdrop-blur-md">
+            {/* Left: Menu & Deck Widgets */}
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => {
+                  setIsPaused(true);
+                  setShowQuitConfirm(true);
+                }}
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-800/90 hover:bg-slate-700 active:scale-95 text-slate-200 hover:text-white rounded-lg text-xs font-bold border border-slate-700 transition-all shadow-sm"
+                title="Sair da batalha e voltar ao menu"
+              >
+                <Home size={14} />
+                <span>Menu</span>
+              </button>
+
+              <button
+                onClick={() => {
+                  setIsPaused(true);
+                  setShowDeckBuilder(true);
+                }}
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-950/60 hover:bg-emerald-900/60 active:scale-95 text-emerald-300 hover:text-emerald-200 rounded-lg text-xs font-bold border border-emerald-500/30 transition-all shadow-sm"
+                title="Pausar e abrir personalizador de baralho"
+              >
+                <Layers size={14} />
+                <span>Baralho ({deckCardIds.length})</span>
+              </button>
+            </div>
+
+            {/* Center: Tactical Game Speed Controller (0.5x, 1x, 2x, 4x) */}
+            <div className="flex items-center gap-1 bg-slate-950 px-2 py-1 rounded-lg border border-slate-800 shadow-inner">
+              <span className="text-[11px] font-bold text-slate-400 font-mono flex items-center gap-1 mr-1">
+                <Gauge size={13} className="text-amber-400" />
+                <span className="hidden sm:inline">VEL:</span>
+              </span>
+              {([0.5, 1, 2, 4] as const).map((spd) => (
+                <button
+                  key={spd}
+                  onClick={() => setGameSpeed(spd)}
+                  className={`px-2 py-0.5 rounded text-xs font-mono font-bold transition-all ${
+                    gameSpeed === spd
+                      ? 'bg-gradient-to-r from-emerald-500 to-teal-400 text-slate-950 shadow-md shadow-emerald-500/25 scale-105'
+                      : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/80'
+                  }`}
+                  title={`Definir velocidade para ${spd}x`}
+                >
+                  {spd}x
+                </button>
+              ))}
+            </div>
+
+            {/* Right: Pause / Play & Reset Controls */}
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setIsPaused(!isPaused)}
+                className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-black transition-all shadow active:scale-95 ${
+                  isPaused
+                    ? 'bg-gradient-to-r from-emerald-500 to-teal-400 text-slate-950 shadow-emerald-500/25 ring-2 ring-emerald-400 animate-pulse'
+                    : 'bg-amber-500/15 text-amber-300 border border-amber-500/40 hover:bg-amber-500/25'
+                }`}
+                title={isPaused ? 'Continuar Jogo (Espaço)' : 'Pausar Jogo (Espaço)'}
+              >
+                {isPaused ? <Play size={14} fill="currentColor" /> : <Pause size={14} />}
+                <span>{isPaused ? 'Continuar' : 'Pausar'}</span>
+              </button>
+
+              <button
+                onClick={() => initBattle(wave)}
+                className="p-1.5 text-slate-400 hover:text-amber-300 hover:bg-slate-800 rounded-lg border border-transparent hover:border-slate-700 transition-colors"
+                title="Reiniciar esta onda"
+              >
+                <RotateCcw size={15} />
+              </button>
+
+              <button
+                onClick={toggleSound}
+                className="p-1.5 text-slate-400 hover:text-white hover:bg-slate-800 rounded-lg border border-transparent hover:border-slate-700 transition-colors"
+                title={soundEnabled ? 'Silenciar som' : 'Ativar som'}
+              >
+                {soundEnabled ? <Volume2 size={16} /> : <VolumeX size={16} />}
+              </button>
+            </div>
+          </div>
+
           {/* Battle Arena */}
           <BattleArena
             selectedCard={selectedCard}
@@ -704,6 +896,17 @@ export const SummonerGame: React.FC<SummonerGameProps> = ({ onBackToHub }) => {
             totalWaveEnemies={totalWaveEnemies}
             isBossWave={wave === 5}
             bossUnit={bossUnit}
+            isPaused={isPaused}
+            onResume={() => setIsPaused(false)}
+            onOpenDeck={() => {
+              setIsPaused(true);
+              setShowDeckBuilder(true);
+            }}
+            onRestartWave={() => initBattle(wave)}
+            onBackToMenu={() => {
+              setIsPaused(true);
+              setShowQuitConfirm(true);
+            }}
           />
 
           {/* Energy Bar Display */}
@@ -716,7 +919,7 @@ export const SummonerGame: React.FC<SummonerGameProps> = ({ onBackToHub }) => {
               <div className="font-mono text-emerald-300">
                 {energy.toFixed(1)} / {upgrades.maxEnergy} ⚡{' '}
                 <span className="text-[10px] text-slate-400 font-sans">
-                  (+{upgrades.energyRegenRate.toFixed(1)}/s)
+                  (+{(upgrades.energyRegenRate * gameSpeed).toFixed(1)}/s @ {gameSpeed}x)
                 </span>
               </div>
             </div>
@@ -747,29 +950,41 @@ export const SummonerGame: React.FC<SummonerGameProps> = ({ onBackToHub }) => {
             />
           </div>
 
-          {/* Tactical Tip & Help */}
-          <div className="w-full max-w-[840px] flex items-center justify-between text-xs text-slate-400 px-3 mt-1">
+          {/* Bottom Quick Controls & Tactical Tip */}
+          <div className="w-full max-w-[840px] flex flex-wrap items-center justify-between text-xs text-slate-400 px-3 mt-2 gap-2">
             <div className="flex items-center gap-2">
               <button
-                onClick={() => setIsPlaying(false)}
-                className="hover:text-white transition-colors underline"
+                onClick={() => {
+                  setIsPaused(true);
+                  setShowQuitConfirm(true);
+                }}
+                className="px-2.5 py-1 bg-slate-800/80 hover:bg-slate-700 hover:text-white text-slate-300 rounded-md border border-slate-700/80 transition-colors flex items-center gap-1 font-semibold"
               >
-                Voltar ao Menu
+                <Home size={12} /> Menu
               </button>
-              <span>·</span>
               <button
-                onClick={() => setShowDeckBuilder(true)}
-                className="hover:text-white transition-colors underline"
+                onClick={() => {
+                  setIsPaused(true);
+                  setShowDeckBuilder(true);
+                }}
+                className="px-2.5 py-1 bg-slate-800/80 hover:bg-slate-700 hover:text-emerald-300 text-slate-300 rounded-md border border-slate-700/80 transition-colors flex items-center gap-1 font-semibold"
               >
-                Ajustar Baralho
+                <Layers size={12} /> Ajustar Baralho
+              </button>
+              <button
+                onClick={() => setIsPaused(!isPaused)}
+                className="px-2.5 py-1 bg-slate-800/80 hover:bg-slate-700 hover:text-amber-300 text-slate-300 rounded-md border border-slate-700/80 transition-colors flex items-center gap-1 font-semibold"
+              >
+                {isPaused ? <Play size={12} /> : <Pause size={12} />}{' '}
+                {isPaused ? 'Despausar' : 'Pausar (Espaço)'}
               </button>
             </div>
-            <span className="text-slate-500 hidden sm:inline">
+            <span className="text-slate-400 font-medium hidden sm:inline">
               {selectedCard
                 ? selectedCard.type === 'creature'
                   ? '👉 Clique em uma das 3 pistas para invocar!'
                   : '👉 Clique na carta para lançar o feitiço!'
-                : 'Selecione uma carta com custo disponível para posicionar no campo.'}
+                : 'Pressione [1, 2, 3, 4] ou clique nas cartas para invocar unidades.'}
             </span>
           </div>
         </div>
@@ -783,14 +998,21 @@ export const SummonerGame: React.FC<SummonerGameProps> = ({ onBackToHub }) => {
               🏆
             </div>
             <div className="text-xs uppercase font-extrabold text-emerald-400 tracking-wider">
-              Bosque Purificado
+              {wave === 1 && '🌲 Floresta Purificada'}
+              {wave === 2 && '🪨 Caverna das Gemas Libertada'}
+              {wave === 3 && '💧 Rio & Lago Místico Purificados'}
+              {wave === 4 && '🏔️ Pico das Tempestades Conquistado'}
+              {wave === 5 && '👑 O TITÃ DA CORRUPÇÃO FOI DERROTADO!'}
             </div>
             <h3 className="text-2xl sm:text-3xl font-black text-white mt-1 mb-2">
-              Vitória na Onda {wave}!
+              {wave === 5 ? 'Vitória Absoluta!' : `Vitória no Nível ${wave}!`}
             </h3>
             <p className="text-xs text-slate-300 mb-6 leading-relaxed">
-              Você protegeu com bravura o Santuário contra as criaturas da podridão.
-              Seus cristais foram depositados na sua reserva mágica!
+              {wave === 1 && 'O bosque dos anciãos está a salvo. Agora você deve adentrar a Caverna das Gemas Sombrias!'}
+              {wave === 2 && 'Você expurgou as sombras das profundezas. O próximo desafio é no Rio & Lago Místico!'}
+              {wave === 3 && 'As águas sagradas voltaram a brilhar. Prepare-se para subir o congelado Pico da Montanha!'}
+              {wave === 4 && 'A montanha foi dominada! A fenda final se abriu na Caldeira do Vulcão onde o Chefe Final aguarda!'}
+              {wave === 5 && 'Você derrotou o Titã da Corrupção na Caldeira de Magma e salvou todo o mundo da Natureza!'}
             </p>
 
             <div className="bg-slate-950 p-4 rounded-xl border border-slate-800 mb-6 flex justify-around font-mono text-sm">
@@ -811,19 +1033,34 @@ export const SummonerGame: React.FC<SummonerGameProps> = ({ onBackToHub }) => {
                   if (wave < 5) {
                     initBattle(wave + 1);
                   } else {
-                    // Loop or replay boss
                     initBattle(1);
                   }
                 }}
                 className="flex-1 py-3 px-4 bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black rounded-xl text-sm transition-transform active:scale-95 flex items-center justify-center gap-2"
               >
-                {wave < 5 ? (
+                {wave === 1 && (
                   <>
-                    Próxima Onda ({wave + 1}) <ArrowRight size={16} />
+                    Nível 2: Caverna <ArrowRight size={16} />
                   </>
-                ) : (
+                )}
+                {wave === 2 && (
                   <>
-                    Reiniciar Campanha <RotateCcw size={16} />
+                    Nível 3: Rio/Lago <ArrowRight size={16} />
+                  </>
+                )}
+                {wave === 3 && (
+                  <>
+                    Nível 4: Montanha <ArrowRight size={16} />
+                  </>
+                )}
+                {wave === 4 && (
+                  <>
+                    Nível 5: Vulcão (Chefe) <ArrowRight size={16} />
+                  </>
+                )}
+                {wave === 5 && (
+                  <>
+                    Jogar Novamente <RotateCcw size={16} />
                   </>
                 )}
               </button>
@@ -877,6 +1114,42 @@ export const SummonerGame: React.FC<SummonerGameProps> = ({ onBackToHub }) => {
                 className="py-3 px-4 bg-slate-800 hover:bg-slate-700 text-white font-semibold rounded-xl text-sm transition-colors"
               >
                 Melhorar Baralho
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Quit to Menu Confirmation Modal */}
+      {showQuitConfirm && (
+        <div className="fixed inset-0 z-50 bg-slate-950/85 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-slate-900 border border-slate-700/80 rounded-2xl p-6 sm:p-7 max-w-sm w-full text-center shadow-2xl animate-fade-in select-none">
+            <div className="w-14 h-14 rounded-2xl bg-amber-500/20 text-amber-300 mx-auto flex items-center justify-center text-2xl mb-3 shadow-inner">
+              <AlertTriangle size={28} />
+            </div>
+            <h3 className="text-xl font-black text-white">Sair da Batalha?</h3>
+            <p className="text-xs text-slate-300 mt-2 mb-6 leading-relaxed">
+              O combate da Onda {wave} está em andamento. Se você voltar ao menu agora, o progresso desta partida será perdido.
+            </p>
+            <div className="flex gap-3">
+              <button
+                onClick={() => {
+                  setShowQuitConfirm(false);
+                  setIsPaused(false);
+                }}
+                className="flex-1 py-2.5 px-4 bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold rounded-xl text-xs transition-colors"
+              >
+                Continuar Jogando
+              </button>
+              <button
+                onClick={() => {
+                  setShowQuitConfirm(false);
+                  setIsPaused(false);
+                  setIsPlaying(false);
+                }}
+                className="flex-1 py-2.5 px-4 bg-rose-600 hover:bg-rose-500 text-white font-black rounded-xl text-xs transition-transform active:scale-95 shadow-lg shadow-rose-900/30"
+              >
+                Sair para o Menu
               </button>
             </div>
           </div>

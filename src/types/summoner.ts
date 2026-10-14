@@ -50,6 +50,7 @@ export interface BattlefieldUnit {
     shield?: number;
   };
   animationOffset: number;
+  facing?: 'left' | 'right';
 }
 
 export interface Projectile {
@@ -60,6 +61,7 @@ export interface Projectile {
   y: number;
   targetX: number;
   targetY: number;
+  targetUnitId?: string;
   speed: number;
   damage: number;
   isAlly: boolean;

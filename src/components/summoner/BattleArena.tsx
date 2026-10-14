@@ -1,6 +1,7 @@
-import React, { useEffect, useRef, useState, useCallback } from 'react';
-import { Card, BattlefieldUnit, Projectile, FloatingDamage, ParticleEffect } from '../../types/summoner';
-import { sound } from '../../utils/audio';
+import React, { useEffect, useRef, useState } from 'react';
+import { Card, BattlefieldUnit, Projectile } from '../../types/summoner';
+import { drawPixelSprite, getSpriteId } from '../../utils/pixelSprites';
+import { drawPixelEnvironment } from '../../utils/pixelEnvironments';
 
 interface BattleArenaProps {
   selectedCard: Card | null;
@@ -14,6 +15,21 @@ interface BattleArenaProps {
   totalWaveEnemies: number;
   isBossWave: boolean;
   bossUnit: BattlefieldUnit | null;
+  isPaused?: boolean;
+  onResume?: () => void;
+  onOpenDeck?: () => void;
+  onRestartWave?: () => void;
+  onBackToMenu?: () => void;
+}
+
+interface BiomeParticle {
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  size: number;
+  alpha: number;
+  color: string;
 }
 
 export const BattleArena: React.FC<BattleArenaProps> = ({
@@ -28,33 +44,149 @@ export const BattleArena: React.FC<BattleArenaProps> = ({
   totalWaveEnemies,
   isBossWave,
   bossUnit,
+  isPaused = false,
+  onResume,
+  onOpenDeck,
+  onRestartWave,
+  onBackToMenu,
 }) => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const [hoveredLane, setHoveredLane] = useState<number | null>(null);
 
   const LANES_COUNT = 3;
   const ARENA_WIDTH = 840;
-  const ARENA_HEIGHT = 440;
-  const LANE_HEIGHT = ARENA_HEIGHT / LANES_COUNT;
+  const ARENA_HEIGHT = 450;
+  const LANE_HEIGHT = 150;
 
-  // Background stars/spores
-  const sporesRef = useRef<Array<{ x: number; y: number; vx: number; vy: number; size: number; alpha: number }>>([]);
-  const particlesRef = useRef<ParticleEffect[]>([]);
-  const floatingTextsRef = useRef<FloatingDamage[]>([]);
+  // Environment particle state
+  const particlesRef = useRef<BiomeParticle[]>([]);
+  const currentWaveRef = useRef<number>(waveNumber);
 
+  // Biome Configurations by Level
+  const getBiomeInfo = (wave: number) => {
+    switch (wave) {
+      case 1:
+        return {
+          level: 1,
+          name: 'Bosque dos Anciãos',
+          biome: 'Floresta Serena',
+          icon: '🌲',
+          bgLeft: '#052217',
+          bgMid: '#0a3525',
+          bgRight: '#161e2e',
+          laneEven: 'rgba(6, 40, 28, 0.4)',
+          laneOdd: 'rgba(4, 25, 18, 0.5)',
+          laneBorder: 'rgba(52, 211, 153, 0.18)',
+          particleColors: ['#6ee7b7', '#a7f3d0', '#fef08a'],
+          type: 'spore',
+        };
+      case 2:
+        return {
+          level: 2,
+          name: 'Caverna dos Cristais Sombrios',
+          biome: 'Caverna Subterrânea',
+          icon: '🪨',
+          bgLeft: '#0a0d17',
+          bgMid: '#121829',
+          bgRight: '#201335',
+          laneEven: 'rgba(15, 23, 42, 0.5)',
+          laneOdd: 'rgba(8, 12, 24, 0.6)',
+          laneBorder: 'rgba(129, 140, 248, 0.22)',
+          particleColors: ['#38bdf8', '#c084fc', '#818cf8'],
+          type: 'crystal',
+        };
+      case 3:
+        return {
+          level: 3,
+          name: 'Lago das Águas Sagradas',
+          biome: 'Rio & Lago Místico',
+          icon: '💧',
+          bgLeft: '#021a24',
+          bgMid: '#053142',
+          bgRight: '#141d3b',
+          laneEven: 'rgba(8, 47, 73, 0.45)',
+          laneOdd: 'rgba(4, 30, 48, 0.55)',
+          laneBorder: 'rgba(56, 189, 248, 0.25)',
+          particleColors: ['#38bdf8', '#7dd3fc', '#bae6fd'],
+          type: 'bubble',
+        };
+      case 4:
+        return {
+          level: 4,
+          name: 'Pico das Tempestades',
+          biome: 'Pico da Montanha',
+          icon: '🏔️',
+          bgLeft: '#18181b',
+          bgMid: '#27272a',
+          bgRight: '#1e293b',
+          laneEven: 'rgba(39, 39, 42, 0.5)',
+          laneOdd: 'rgba(24, 24, 27, 0.65)',
+          laneBorder: 'rgba(226, 232, 240, 0.2)',
+          particleColors: ['#e2e8f0', '#94a3b8', '#cbd5e1'],
+          type: 'snow',
+        };
+      case 5:
+      default:
+        return {
+          level: 5,
+          name: 'Caldeira do Titã Corrompido',
+          biome: 'Vulcão & Magma (Chefe Final)',
+          icon: '🌋',
+          bgLeft: '#1c0505',
+          bgMid: '#2d0808',
+          bgRight: '#3d0a18',
+          laneEven: 'rgba(40, 8, 8, 0.6)',
+          laneOdd: 'rgba(25, 4, 4, 0.7)',
+          laneBorder: 'rgba(249, 115, 22, 0.35)',
+          particleColors: ['#f97316', '#ea580c', '#fef08a', '#ef4444'],
+          type: 'ember',
+        };
+    }
+  };
+
+  const currentBiome = getBiomeInfo(waveNumber);
+
+  // Initialize or re-initialize ambient particles on biome change
   useEffect(() => {
-    // Generate gentle ambient floating spores
-    sporesRef.current = Array.from({ length: 45 }).map(() => ({
-      x: Math.random() * ARENA_WIDTH,
-      y: Math.random() * ARENA_HEIGHT,
-      vx: (Math.random() - 0.5) * 0.4,
-      vy: -Math.random() * 0.6 - 0.2,
-      size: Math.random() * 2.5 + 1,
-      alpha: Math.random() * 0.7 + 0.2,
-    }));
-  }, []);
+    currentWaveRef.current = waveNumber;
+    const biome = getBiomeInfo(waveNumber);
 
-  // Continuous render loop for canvas
+    particlesRef.current = Array.from({ length: 50 }).map(() => {
+      const color = biome.particleColors[Math.floor(Math.random() * biome.particleColors.length)];
+      let vx = (Math.random() - 0.5) * 0.4;
+      let vy = -Math.random() * 0.6 - 0.2;
+      let size = Math.random() * 2.5 + 1;
+
+      if (biome.type === 'snow') {
+        // Fast horizontal alpine wind
+        vx = Math.random() * 2.5 + 1.2;
+        vy = (Math.random() - 0.5) * 0.8;
+        size = Math.random() * 2 + 1;
+      } else if (biome.type === 'ember') {
+        // High energy lava embers
+        vx = (Math.random() - 0.5) * 0.8;
+        vy = -Math.random() * 1.6 - 0.6;
+        size = Math.random() * 3 + 1.5;
+      } else if (biome.type === 'bubble') {
+        // Floating water bubbles
+        vx = Math.random() * 0.5 + 0.2;
+        vy = -Math.random() * 0.5 - 0.3;
+        size = Math.random() * 3 + 2;
+      }
+
+      return {
+        x: Math.random() * ARENA_WIDTH,
+        y: Math.random() * ARENA_HEIGHT,
+        vx,
+        vy,
+        size,
+        alpha: Math.random() * 0.7 + 0.3,
+        color,
+      };
+    });
+  }, [waveNumber]);
+
+  // Main continuous canvas render loop
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -64,194 +196,92 @@ export const BattleArena: React.FC<BattleArenaProps> = ({
     let animId: number;
 
     const render = () => {
-      // 1. Draw Forest Battlefield Background
-      const bgGrad = ctx.createLinearGradient(0, 0, ARENA_WIDTH, 0);
-      bgGrad.addColorStop(0, '#062319'); // Lush nature green sanctuary
-      bgGrad.addColorStop(0.35, '#0a3326');
-      bgGrad.addColorStop(0.7, '#161d2d');
-      bgGrad.addColorStop(1, '#200e2b'); // Dark corrupted rift
-      ctx.fillStyle = bgGrad;
-      ctx.fillRect(0, 0, ARENA_WIDTH, ARENA_HEIGHT);
+      const time = Date.now() * 0.003;
+      const biomeLevel = currentWaveRef.current;
 
-      // Draw Lanes & Ground Texture
+      // 1. Draw 16-bit Retro Pixel Art Environment (Terrain, Lanes, Shrines, and Portals)
+      drawPixelEnvironment(ctx, biomeLevel, ARENA_WIDTH, ARENA_HEIGHT, time);
+
+      // 2. Highlight Lane on Card Summon Hover
       for (let i = 0; i < LANES_COUNT; i++) {
         const laneY = i * LANE_HEIGHT;
-
-        // Subtle lane turf stripe
-        ctx.fillStyle = i % 2 === 0 ? 'rgba(6, 40, 28, 0.35)' : 'rgba(4, 25, 18, 0.45)';
-        ctx.fillRect(0, laneY, ARENA_WIDTH, LANE_HEIGHT);
-
-        // Lane divider dashed lines
-        if (i > 0) {
-          ctx.strokeStyle = 'rgba(52, 211, 153, 0.15)';
-          ctx.setLineDash([8, 8]);
-          ctx.beginPath();
-          ctx.moveTo(100, laneY);
-          ctx.lineTo(ARENA_WIDTH - 90, laneY);
-          ctx.stroke();
-          ctx.setLineDash([]);
-        }
-
-        // Highlight lane on card hover
         if (selectedCard && hoveredLane === i && selectedCard.type === 'creature') {
-          ctx.fillStyle = 'rgba(16, 185, 129, 0.12)';
+          ctx.fillStyle = 'rgba(16, 185, 129, 0.2)';
           ctx.fillRect(110, laneY + 4, ARENA_WIDTH - 200, LANE_HEIGHT - 8);
 
-          ctx.strokeStyle = 'rgba(52, 211, 153, 0.6)';
-          ctx.lineWidth = 1.5;
+          ctx.strokeStyle = '#34d399';
+          ctx.lineWidth = 2;
           ctx.strokeRect(110, laneY + 4, ARENA_WIDTH - 200, LANE_HEIGHT - 8);
 
-          // Lane summon indicator text
           ctx.fillStyle = '#6ee7b7';
-          ctx.font = 'bold 12px Plus Jakarta Sans, sans-serif';
+          ctx.font = 'bold 12px monospace';
           ctx.textAlign = 'center';
-          ctx.fillText(`+ Invocar ${selectedCard.namePt} Aqui`, 260, laneY + LANE_HEIGHT / 2 + 4);
+          ctx.fillText(`+ INVOCAR ${selectedCard.namePt.toUpperCase()} AQUI`, 280, laneY + LANE_HEIGHT / 2 + 4);
         }
       }
 
-      // Draw Sanctuary Line & Roots on Left
-      ctx.fillStyle = 'rgba(5, 150, 105, 0.18)';
-      ctx.fillRect(0, 0, 105, ARENA_HEIGHT);
-      ctx.strokeStyle = 'rgba(52, 211, 153, 0.4)';
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-      ctx.moveTo(105, 0);
-      ctx.lineTo(105, ARENA_HEIGHT);
-      ctx.stroke();
+      // 3. Draw Biome Ambient Particles
+      particlesRef.current.forEach((p) => {
+        p.x += p.vx;
+        p.y += p.vy;
 
-      // Ancient Sanctuary Guardian Tree / Staff Icon
-      ctx.save();
-      ctx.translate(50, ARENA_HEIGHT / 2);
-      ctx.shadowColor = '#34d399';
-      ctx.shadowBlur = 18;
-      ctx.fillStyle = '#059669';
-      ctx.beginPath();
-      ctx.arc(0, 0, 36, 0, Math.PI * 2);
-      ctx.fill();
-
-      // Crystal center
-      ctx.fillStyle = '#6ee7b7';
-      ctx.beginPath();
-      ctx.arc(0, 0, 16, 0, Math.PI * 2);
-      ctx.fill();
-
-      // Sanctuary Rune Label
-      ctx.fillStyle = '#ffffff';
-      ctx.font = 'bold 10px Outfit, sans-serif';
-      ctx.textAlign = 'center';
-      ctx.fillText('SANTUÁRIO', 0, 30);
-      ctx.restore();
-
-      // Draw Corrupted Portal Rift on Right
-      ctx.fillStyle = 'rgba(147, 51, 234, 0.15)';
-      ctx.fillRect(ARENA_WIDTH - 85, 0, 85, ARENA_HEIGHT);
-      ctx.strokeStyle = 'rgba(168, 85, 247, 0.4)';
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-      ctx.moveTo(ARENA_WIDTH - 85, 0);
-      ctx.lineTo(ARENA_WIDTH - 85, ARENA_HEIGHT);
-      ctx.stroke();
-
-      // Portal vortex
-      ctx.save();
-      ctx.translate(ARENA_WIDTH - 42, ARENA_HEIGHT / 2);
-      ctx.shadowColor = '#c084fc';
-      ctx.shadowBlur = 16;
-      ctx.fillStyle = '#581c87';
-      ctx.beginPath();
-      ctx.arc(0, 0, 32, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.fillStyle = '#e879f9';
-      ctx.beginPath();
-      ctx.arc(0, 0, 12, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.fillStyle = '#ffffff';
-      ctx.font = 'bold 9px Outfit, sans-serif';
-      ctx.textAlign = 'center';
-      ctx.fillText('PORTAL', 0, 26);
-      ctx.restore();
-
-      // Update & Draw Ambient Spores
-      sporesRef.current.forEach((spore) => {
-        spore.x += spore.vx;
-        spore.y += spore.vy;
-        if (spore.y < 0) {
-          spore.y = ARENA_HEIGHT;
-          spore.x = Math.random() * ARENA_WIDTH;
+        // Wrap around boundaries
+        if (p.y < 0) {
+          p.y = ARENA_HEIGHT;
+          p.x = Math.random() * ARENA_WIDTH;
         }
-        ctx.fillStyle = `rgba(110, 231, 183, ${spore.alpha})`;
+        if (p.x > ARENA_WIDTH) {
+          p.x = 0;
+          p.y = Math.random() * ARENA_HEIGHT;
+        }
+
+        ctx.fillStyle = p.color;
+        ctx.globalAlpha = p.alpha;
         ctx.beginPath();
-        ctx.arc(spore.x, spore.y, spore.size, 0, Math.PI * 2);
+        ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
         ctx.fill();
+        ctx.globalAlpha = 1;
       });
 
-      // 2. Draw Battlefield Units
+      // 4. Render Battlefield Units using Custom Pixel Art Sprites
       units.forEach((unit) => {
         ctx.save();
         ctx.translate(unit.x, unit.y);
 
         const isAlly = unit.isAlly;
-        const color = unit.color;
+        const isFacingRight = unit.facing ? unit.facing === 'right' : isAlly;
 
-        // Shadow under unit
-        ctx.fillStyle = 'rgba(0, 0, 0, 0.35)';
+        // Ground shadow
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.45)';
         ctx.beginPath();
-        ctx.ellipse(0, unit.height / 2 - 2, unit.width / 2, 6, 0, 0, Math.PI * 2);
+        ctx.ellipse(0, unit.height / 2 - 2, unit.width / 2.2, 5, 0, 0, Math.PI * 2);
         ctx.fill();
 
-        // Unit Body
-        ctx.shadowColor = color;
-        ctx.shadowBlur = 10;
-        ctx.fillStyle = color;
+        // Pixel Art Sprite
+        const spriteId = getSpriteId(unit.cardId, unit.isAlly, unit.role, unit.maxHp);
+        const bob = unit.isFlying
+          ? Math.sin(time * 3 + unit.animationOffset) * 5
+          : Math.sin(time * 5 + unit.animationOffset) * 2;
 
-        if (unit.role === 'tank') {
-          // Bulky Treant / Titan
-          ctx.beginPath();
-          ctx.roundRect(-unit.width / 2, -unit.height / 2, unit.width, unit.height, 8);
-          ctx.fill();
-          // Inner bark
-          ctx.strokeStyle = '#052e16';
-          ctx.lineWidth = 2;
-          ctx.stroke();
-        } else if (unit.role === 'flying') {
-          // Bird / Drake with floating bobbing
-          const bob = Math.sin(Date.now() * 0.008 + unit.animationOffset) * 5;
-          ctx.translate(0, bob);
-          ctx.beginPath();
-          ctx.moveTo(isAlly ? unit.width / 2 : -unit.width / 2, 0);
-          ctx.lineTo(isAlly ? -unit.width / 2 : unit.width / 2, -unit.height / 2);
-          ctx.lineTo(isAlly ? -unit.width / 3 : unit.width / 3, 0);
-          ctx.lineTo(isAlly ? -unit.width / 2 : unit.width / 2, unit.height / 2);
-          ctx.closePath();
-          ctx.fill();
-        } else if (unit.role === 'support') {
-          // Pixie orb with glowing wings
-          ctx.beginPath();
-          ctx.arc(0, 0, unit.width / 2.2, 0, Math.PI * 2);
-          ctx.fill();
-          // Wings
-          ctx.fillStyle = 'rgba(255, 255, 255, 0.6)';
-          ctx.beginPath();
-          ctx.ellipse(-8, -10, 6, 12, Math.PI / 4, 0, Math.PI * 2);
-          ctx.ellipse(8, -10, 6, 12, -Math.PI / 4, 0, Math.PI * 2);
-          ctx.fill();
-        } else {
-          // Agile wolf or mob
-          ctx.beginPath();
-          ctx.roundRect(-unit.width / 2, -unit.height / 2, unit.width, unit.height, 6);
-          ctx.fill();
-        }
+        drawPixelSprite(
+          ctx,
+          spriteId,
+          unit.width,
+          unit.height,
+          isFacingRight, // Automatically faces left when defending the sanctuary!
+          bob
+        );
 
         // Entangling roots visual effect
         if (unit.statusEffects?.frozen && unit.statusEffects.frozen > 0) {
           ctx.strokeStyle = '#22c55e';
           ctx.lineWidth = 3;
           ctx.beginPath();
-          ctx.arc(0, 0, unit.width * 0.7, 0, Math.PI * 2);
+          ctx.arc(0, 0, unit.width * 0.68, 0, Math.PI * 2);
           ctx.stroke();
         }
 
-        // Unit Name
+        // Unit Name Label
         ctx.fillStyle = '#ffffff';
         ctx.font = 'bold 10px Plus Jakarta Sans, sans-serif';
         ctx.textAlign = 'center';
@@ -260,19 +290,19 @@ export const BattleArena: React.FC<BattleArenaProps> = ({
         // HP Bar
         const barW = Math.max(34, unit.width);
         const hpPct = Math.max(0, Math.min(1, unit.hp / unit.maxHp));
-        ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.75)';
         ctx.fillRect(-barW / 2, -unit.height / 2 - 8, barW, 5);
 
         ctx.fillStyle = isAlly ? (hpPct > 0.4 ? '#10b981' : '#f59e0b') : '#ef4444';
         ctx.fillRect(-barW / 2, -unit.height / 2 - 8, barW * hpPct, 5);
-        ctx.strokeStyle = 'rgba(255, 255, 255, 0.2)';
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.25)';
         ctx.lineWidth = 0.5;
         ctx.strokeRect(-barW / 2, -unit.height / 2 - 8, barW, 5);
 
         ctx.restore();
       });
 
-      // 3. Draw Projectiles
+      // 8. Draw Projectiles
       projectiles.forEach((proj) => {
         ctx.save();
         ctx.shadowColor = proj.color;
@@ -282,7 +312,15 @@ export const BattleArena: React.FC<BattleArenaProps> = ({
         if (proj.type === 'thorn') {
           // Sharp thorn needle
           ctx.beginPath();
-          ctx.ellipse(proj.x, proj.y, 6, 2.5, Math.atan2(proj.targetY - proj.startY, proj.targetX - proj.startX), 0, Math.PI * 2);
+          ctx.ellipse(
+            proj.x,
+            proj.y,
+            6,
+            2.5,
+            Math.atan2(proj.targetY - proj.startY, proj.targetX - proj.startX),
+            0,
+            Math.PI * 2
+          );
           ctx.fill();
         } else if (proj.type === 'fire') {
           // Emerald fire burst
@@ -334,28 +372,38 @@ export const BattleArena: React.FC<BattleArenaProps> = ({
 
   return (
     <div className="relative w-full max-w-[840px] flex flex-col items-center select-none">
-      {/* Top Sanctuary Health & Wave Info Bar */}
+      {/* Top Sanctuary Health & Biome Info Bar */}
       <div className="w-full flex items-center justify-between px-4 py-2 bg-slate-900/90 border border-slate-800 rounded-t-xl text-xs backdrop-blur-sm">
         {/* Sanctuary HP */}
         <div className="flex items-center gap-3">
           <div className="flex items-center gap-1.5 font-bold text-emerald-400">
             <span className="text-base">🌳</span> Santuário da Floresta
           </div>
-          <div className="w-32 sm:w-48 h-3 bg-slate-950 rounded-full border border-slate-800 overflow-hidden">
+          <div className="w-28 sm:w-44 h-3 bg-slate-950 rounded-full border border-slate-800 overflow-hidden">
             <div
               className={`h-full transition-all duration-300 ${
-                summonerHp / summonerMaxHp > 0.4 ? 'bg-gradient-to-r from-emerald-500 to-teal-400' : 'bg-rose-500'
+                summonerHp / summonerMaxHp > 0.4
+                  ? 'bg-gradient-to-r from-emerald-500 to-teal-400'
+                  : 'bg-rose-500'
               }`}
               style={{ width: `${Math.max(0, (summonerHp / summonerMaxHp) * 100)}%` }}
             />
           </div>
-          <span className="font-mono tabular-nums text-slate-300 font-semibold">
+          <span className="font-mono tabular-nums text-slate-300 font-semibold hidden sm:inline">
             {Math.max(0, Math.round(summonerHp))} / {summonerMaxHp} HP
           </span>
         </div>
 
-        {/* Wave & Hostiles Count */}
-        <div className="flex items-center gap-4 text-slate-300 font-mono">
+        {/* Biome Name & Wave / Hostiles Count */}
+        <div className="flex items-center gap-3 sm:gap-4 text-slate-300 font-mono">
+          <div className="flex items-center gap-1 text-emerald-300 font-sans font-bold">
+            <span>{currentBiome.icon}</span>
+            <span className="hidden md:inline">{currentBiome.name}</span>
+            <span className="md:hidden">Nv.{currentBiome.level}</span>
+          </div>
+
+          <div className="h-4 w-[1px] bg-slate-800" />
+
           <div>
             <span className="text-slate-400">Onda:</span>{' '}
             <strong className="text-white text-sm">{waveNumber}</strong>
@@ -370,8 +418,34 @@ export const BattleArena: React.FC<BattleArenaProps> = ({
         </div>
       </div>
 
+      {/* Boss Health Bar Banner (Positioned above canvas so it NEVER covers top lane 0) */}
+      {isBossWave && bossUnit && (
+        <div className="w-full bg-slate-950/95 border-x-2 border-b-2 border-purple-500/70 px-4 py-2 shadow-2xl flex items-center justify-between gap-4 animate-fade-in z-20">
+          <div className="flex items-center gap-2 shrink-0">
+            <span className="text-sm animate-pulse">⚠️</span>
+            <div>
+              <div className="text-xs font-black uppercase tracking-wider text-purple-300">
+                {bossUnit.name} (Chefe Final)
+              </div>
+              <div className="text-[10px] text-rose-400 font-mono">
+                {Math.max(0, bossUnit.hp)} / {bossUnit.maxHp} HP
+              </div>
+            </div>
+          </div>
+          <div className="flex-1 max-w-md h-3 bg-slate-900 rounded-full border border-purple-900/80 overflow-hidden">
+            <div
+              className="h-full bg-gradient-to-r from-purple-600 via-rose-500 to-amber-500 transition-all duration-150 shadow-[0_0_12px_rgba(239,68,68,0.6)]"
+              style={{ width: `${Math.max(0, (bossUnit.hp / bossUnit.maxHp) * 100)}%` }}
+            />
+          </div>
+          <span className="text-xs font-bold text-amber-400 font-mono tabular-nums shrink-0">
+            {Math.round((bossUnit.hp / bossUnit.maxHp) * 100)}%
+          </span>
+        </div>
+      )}
+
       {/* Main Canvas Battlefield */}
-      <div className="relative w-full border-x-2 border-b-2 border-slate-800 rounded-b-xl overflow-hidden shadow-2xl bg-[#062319]">
+      <div className="relative w-full border-x-2 border-b-2 border-slate-800 rounded-b-xl overflow-hidden shadow-2xl bg-black">
         <canvas
           ref={canvasRef}
           width={ARENA_WIDTH}
@@ -379,30 +453,15 @@ export const BattleArena: React.FC<BattleArenaProps> = ({
           onPointerMove={handlePointerMove}
           onPointerLeave={handlePointerLeave}
           onPointerDown={handleClick}
-          className={`block w-full h-auto cursor-${selectedCard ? 'crosshair' : 'default'} touch-none`}
-          style={{ aspectRatio: `${ARENA_WIDTH}/${ARENA_HEIGHT}` }}
+          className={`pixelated block w-full h-auto cursor-${selectedCard ? 'crosshair' : 'default'} touch-none`}
+          style={{
+            aspectRatio: `${ARENA_WIDTH}/${ARENA_HEIGHT}`,
+            imageRendering: 'pixelated',
+          }}
         />
 
-        {/* Boss Health Bar Banner (if Boss Wave active) */}
-        {isBossWave && bossUnit && (
-          <div className="absolute top-2 left-1/2 -translate-x-1/2 w-80 bg-slate-950/90 border border-purple-500/60 rounded-xl p-2 shadow-2xl backdrop-blur flex flex-col items-center animate-fade-in">
-            <div className="text-[11px] font-extrabold uppercase tracking-wider text-purple-400 flex items-center gap-1.5 mb-1">
-              <span>⚠️</span> {bossUnit.name} (Chefe)
-            </div>
-            <div className="w-full h-2.5 bg-slate-900 rounded-full border border-purple-900/60 overflow-hidden">
-              <div
-                className="h-full bg-gradient-to-r from-purple-600 via-rose-500 to-red-500 transition-all duration-150"
-                style={{ width: `${Math.max(0, (bossUnit.hp / bossUnit.maxHp) * 100)}%` }}
-              />
-            </div>
-            <div className="text-[10px] font-mono text-slate-300 mt-1">
-              {Math.max(0, bossUnit.hp)} / {bossUnit.maxHp} HP
-            </div>
-          </div>
-        )}
-
         {/* Lane summon helper chips (visible when card is selected) */}
-        {selectedCard && selectedCard.type === 'creature' && (
+        {selectedCard && selectedCard.type === 'creature' && !isPaused && (
           <div className="absolute inset-y-0 left-28 w-44 pointer-events-none flex flex-col justify-around py-4">
             {[0, 1, 2].map((laneIdx) => (
               <div
@@ -416,6 +475,60 @@ export const BattleArena: React.FC<BattleArenaProps> = ({
                 Pista {laneIdx === 0 ? 'Superior' : laneIdx === 1 ? 'Central' : 'Inferior'}
               </div>
             ))}
+          </div>
+        )}
+
+        {/* In-Game Pause Overlay Modal */}
+        {isPaused && (
+          <div className="absolute inset-0 z-30 bg-slate-950/85 backdrop-blur-sm flex flex-col items-center justify-center p-6 text-center animate-fade-in select-none">
+            <div className="w-14 h-14 rounded-2xl bg-amber-500/20 border border-amber-500/40 text-amber-300 flex items-center justify-center text-2xl mb-3 shadow-lg shadow-amber-500/10">
+              ⏸️
+            </div>
+            <h3 className="text-2xl font-black text-white tracking-wide">
+              JOGO PAUSADO
+            </h3>
+            <p className="text-xs text-slate-400 mt-1 mb-5 max-w-xs">
+              A batalha foi congelada. Você pode reorganizar suas estratégias, verificar suas cartas ou retomar a qualquer momento.
+            </p>
+
+            <div className="flex flex-col sm:flex-row gap-2.5 w-full max-w-md">
+              <button
+                onClick={onResume}
+                className="flex-1 py-2.5 px-4 bg-emerald-500 hover:bg-emerald-400 active:scale-95 text-slate-950 font-black rounded-xl text-sm transition-all shadow-lg flex items-center justify-center gap-2"
+              >
+                <span>▶️</span> Continuar (Espaço)
+              </button>
+              {onOpenDeck && (
+                <button
+                  onClick={onOpenDeck}
+                  className="py-2.5 px-4 bg-slate-800 hover:bg-slate-700 active:scale-95 text-white font-bold rounded-xl text-sm border border-slate-700 transition-all flex items-center justify-center gap-1.5"
+                >
+                  <span>🃏</span> Ajustar Baralho
+                </button>
+              )}
+            </div>
+
+            <div className="flex items-center gap-4 mt-4 text-xs">
+              {onRestartWave && (
+                <button
+                  onClick={onRestartWave}
+                  className="text-slate-400 hover:text-amber-400 transition-colors flex items-center gap-1"
+                >
+                  <span>🔄</span> Reiniciar Onda {waveNumber}
+                </button>
+              )}
+              {onRestartWave && onBackToMenu && (
+                <span className="text-slate-600">·</span>
+              )}
+              {onBackToMenu && (
+                <button
+                  onClick={onBackToMenu}
+                  className="text-slate-400 hover:text-rose-400 transition-colors flex items-center gap-1"
+                >
+                  <span>🏠</span> Sair para o Menu
+                </button>
+              )}
+            </div>
           </div>
         )}
       </div>
