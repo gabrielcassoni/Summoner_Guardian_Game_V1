@@ -1,12 +1,12 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { Card, BattlefieldUnit, Projectile, FloatingDamage, SummonerUpgrades } from '../../types/summoner';
+import { Card, BattlefieldUnit, Projectile, SummonerUpgrades } from '../../types/summoner';
 import { INITIAL_CARDS, INITIAL_DECK_IDS, CARD_ASSETS, getCardImage } from '../../data/summonerCards';
 import { BattleArena } from './BattleArena';
 import { CardHand } from './CardHand';
 import { DeckBuilder } from './DeckBuilder';
 import { SafeImage } from '../common/SafeImage';
 import { sound } from '../../utils/audio';
-import { Play, Pause, RotateCcw, Volume2, VolumeX, Sparkles, BookOpen, Layers, Zap, Heart, Trophy, ArrowRight, Home, Gauge, FastForward, AlertTriangle } from 'lucide-react';
+import { Play, Pause, RotateCcw, Volume2, VolumeX, Layers, Zap, ArrowRight, Home, Gauge, AlertTriangle } from 'lucide-react';
 
 interface SummonerGameProps {
   onBackToHub?: () => void;
@@ -25,7 +25,9 @@ export const SummonerGame: React.FC<SummonerGameProps> = ({ onBackToHub }) => {
           image: getCardImage(card.id),
         }));
       }
-    } catch {}
+    } catch (error) {
+      console.warn('Falha ao carregar cartas salvas, usando o baralho inicial.', error);
+    }
     return INITIAL_CARDS;
   });
 
@@ -33,7 +35,9 @@ export const SummonerGame: React.FC<SummonerGameProps> = ({ onBackToHub }) => {
     try {
       const saved = localStorage.getItem('nexus_nature_deck');
       if (saved) return JSON.parse(saved);
-    } catch {}
+    } catch (error) {
+      console.warn('Falha ao carregar baralho salvo, usando o baralho inicial.', error);
+    }
     return INITIAL_DECK_IDS;
   });
 
@@ -41,7 +45,9 @@ export const SummonerGame: React.FC<SummonerGameProps> = ({ onBackToHub }) => {
     try {
       const saved = localStorage.getItem('nexus_nature_crystals');
       if (saved) return Number(saved);
-    } catch {}
+    } catch (error) {
+      console.warn('Falha ao carregar cristais salvos, usando valor inicial.', error);
+    }
     return 150; // Starting gift
   });
 
@@ -49,7 +55,9 @@ export const SummonerGame: React.FC<SummonerGameProps> = ({ onBackToHub }) => {
     try {
       const saved = localStorage.getItem('nexus_nature_upgrades');
       if (saved) return JSON.parse(saved);
-    } catch {}
+    } catch (error) {
+      console.warn('Falha ao carregar upgrades salvos, usando valores padrão.', error);
+    }
     return {
       maxEnergy: 10,
       energyRegenRate: 1.0,

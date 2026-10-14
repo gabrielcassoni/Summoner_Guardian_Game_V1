@@ -1,14 +1,28 @@
 {
-  "name": "react-example",
+  "name": "summoner-guardian",
   "private": true,
-  "version": "0.0.0",
+  "version": "0.1.0",
+  "description": "Jogo de defesa tática onde você é um Invocador da Natureza: ganhe energia com o tempo e use cartas de um baralho customizável para invocar criaturas e defender seu Santuário contra hordas de monstros.",
   "type": "module",
+  "author": "Gabriel Ramos Cassoni",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/gabrielcassoni/summoner_guardian_game_v1"
+  },
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
     "dev": "vite --port=3000 --host=0.0.0.0",
     "build": "vite build",
     "preview": "vite preview",
-    "clean": "rm -rf dist server.js",
-    "lint": "tsc --noEmit"
+    "clean": "rm -rf dist",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "format": "prettier --write .",
+    "format:check": "prettier --check ."
   },
   "dependencies": {
     "@google/genai": "^2.4.0",
@@ -23,14 +37,22 @@
     "motion": "^12.23.24"
   },
   "devDependencies": {
+    "@eslint/js": "^9.17.0",
+    "@types/express": "^4.17.21",
     "@types/node": "^22.14.0",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
+    "@typescript/native": "npm:typescript@^7.0.2",
     "autoprefixer": "^10.4.21",
-    "esbuild": "^0.25.0",
+    "esbuild": "^0.28.0",
+    "eslint": "^9.17.0",
+    "eslint-plugin-react-hooks": "^5.1.0",
+    "eslint-plugin-react-refresh": "^0.4.16",
+    "globals": "^15.14.0",
+    "prettier": "^3.4.2",
     "tailwindcss": "^4.3.3",
     "tsx": "^4.21.0",
-    "typescript": "^7.0.2",
-    "@types/express": "^4.17.21"
+    "typescript": "npm:@typescript/typescript6@^6.0.2",
+    "typescript-eslint": "^8.19.0"
   }
 }

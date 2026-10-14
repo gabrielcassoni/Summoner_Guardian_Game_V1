@@ -122,7 +122,6 @@ function createBiomeTerrainCanvas(level: number, width: number, height: number):
 
     // Lush variegated grass carpet with dithered texture
     for (let y = 0; y < height; y += TILE) {
-      const laneIdx = Math.floor(y / laneHeight);
       for (let x = 0; x < width; x += TILE) {
         const seed = (x * 13 + y * 17) % 7;
         let grassColor = '#0b3924';
@@ -218,9 +217,7 @@ function createBiomeTerrainCanvas(level: number, width: number, height: number):
 
     // Deepslate brick patterns
     for (let y = 0; y < height; y += TILE) {
-      const isStagger = (Math.floor(y / TILE) % 2) === 1;
       for (let x = 0; x < width; x += TILE) {
-        const sx = isStagger ? x + 8 : x;
         const seed = (x * 11 + y * 23) % 5;
         let slateCol = '#0d1322';
         if (seed === 0) slateCol = '#11182c';

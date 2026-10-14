@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { sound } from '../../utils/audio';
-import { GameState } from '../../types/game';
+import { GameState } from './types';
 import { Play, Pause, RotateCcw, Volume2, VolumeX, Shield, Zap, Sparkles, ArrowLeft } from 'lucide-react';
 
 interface SpaceDefenderProps {

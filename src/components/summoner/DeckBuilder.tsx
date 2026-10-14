@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { Card, SummonerUpgrades } from '../../types/summoner';
 import { SafeImage } from '../common/SafeImage';
-import { Shield, Swords, Crosshair, Feather, Sparkles, Wand2, Plus, Minus, ArrowUpCircle, Check, Lock, X } from 'lucide-react';
+import { Plus, Minus, ArrowUpCircle, Lock, X } from 'lucide-react';
 import { sound } from '../../utils/audio';
 
 interface DeckBuilderProps {

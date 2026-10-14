@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { sound } from '../../utils/audio';
-import { GameState } from '../../types/game';
+import { GameState } from './types';
 import { RotateCcw, Volume2, VolumeX, Pause, Play, ArrowLeft, ArrowUp, ArrowDown, ArrowLeft as LeftIcon, ArrowRight as RightIcon } from 'lucide-react';
 
 interface CyberSnakeProps {
