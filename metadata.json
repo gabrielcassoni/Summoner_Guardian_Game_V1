@@ -1,0 +1,8 @@
+{
+  "name": "Nexus Arcade",
+  "description": "Jogo de defesa tática onde você é um Invocador da Natureza. Ganhe energia com o tempo e use cartas de um baralho customizável para sumonar criaturas e defender seu Santuário contra hordas de monstros.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
